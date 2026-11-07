@@ -19,7 +19,9 @@ export class Particles {
   size = new Float32Array(this.cap) // render size (m)
   life = new Float32Array(this.cap)
   maxLife = new Float32Array(this.cap)
+  /** 0 water droplet, 1 mist, 2 solid debris */
   mist = new Uint8Array(this.cap)
+  cr = new Float32Array(this.cap).fill(1); cg = new Float32Array(this.cap).fill(1); cb = new Float32Array(this.cap).fill(1)
   owner = new Int32Array(this.cap)
   private head = 0
   count = 0
@@ -32,12 +34,14 @@ export class Particles {
   rSize = new Float32Array(this.cap)
   rAlpha = new Float32Array(this.cap)
   rMist = new Float32Array(this.cap)
+  rColor = new Float32Array(this.cap * 3)
   rCount = 0
 
   spawn(
     x: number, y: number, z: number,
     vx: number, vy: number, vz: number,
-    radius: number, size: number, life: number, mist: boolean, owner: number,
+    radius: number, size: number, life: number, mist: boolean | number, owner: number,
+    color?: [number, number, number],
   ) {
     const i = this.head
     this.head = (this.head + 1) % this.cap
@@ -46,7 +50,8 @@ export class Particles {
     this.vx[i] = vx; this.vy[i] = vy; this.vz[i] = vz
     this.radius[i] = radius; this.size[i] = size
     this.life[i] = life; this.maxLife[i] = life
-    this.mist[i] = mist ? 1 : 0
+    this.mist[i] = typeof mist === 'number' ? mist : mist ? 1 : 0
+    this.cr[i] = color ? color[0] : 1; this.cg[i] = color ? color[1] : 1; this.cb[i] = color ? color[2] : 1
     this.owner[i] = owner
   }
 
@@ -71,7 +76,7 @@ export class Particles {
       this.vx[i] = vx; this.vy[i] = vy; this.vz[i] = vz
       this.px[i] = x; this.py[i] = y; this.pz[i] = z
       const o = this.owner[i]
-      if (o >= 0 && !this.mist[i]) {
+      if (o >= 0 && this.mist[i] === 0) {
         const pk = this.peaks.get(o)
         if (pk !== undefined && y > pk) this.peaks.set(o, y)
       }
@@ -80,7 +85,7 @@ export class Particles {
           const ws = water.heightAt(x, z)
           if (y < ws) {
             if (y < water.floorAt(x, z)) { this.life[i] = 0; continue }
-            if (!this.mist[i]) {
+            if (this.mist[i] !== 1) {
               // droplet impact crater: volume scales with drop volume × impact speed
               const vol = (4 / 3) * Math.PI * r * r * r
               water.addVolume(x, z, -Math.min(0.03, vol * (-vy) * 55))
@@ -112,8 +117,10 @@ export class Particles {
       this.rVel[n * 3 + 1] = this.vy[i]
       this.rVel[n * 3 + 2] = this.vz[i]
       const t = l / this.maxLife[i]
-      this.rSize[n] = this.mist[i] ? this.size[i] * (1.8 - 0.8 * t) : this.size[i]
-      this.rAlpha[n] = this.mist[i] ? 0.07 * t * Math.min(1, (1 - t) * 6) : Math.min(1, t * 6)
+      const kind = this.mist[i]
+      this.rSize[n] = kind === 1 ? this.size[i] * (1.8 - 0.8 * t) : this.size[i]
+      this.rAlpha[n] = kind === 1 ? 0.07 * t * Math.min(1, (1 - t) * 6) : Math.min(1, t * 6)
+      this.rColor[n * 3] = this.cr[i]; this.rColor[n * 3 + 1] = this.cg[i]; this.rColor[n * 3 + 2] = this.cb[i]
       this.rMist[n] = this.mist[i]
       n++
     }

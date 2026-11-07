@@ -7,6 +7,7 @@ import { World } from '@/scene/World'
 import { useStore } from '@/store'
 import { Brand, Dock, Stats, Telemetry } from '@/components/Hud'
 import { renderThumbnails } from '@/scene/thumbnails'
+import { SEASONS, type SeasonId } from '@/scene/atmosphere'
 
 export default function App() {
   const [engine, setEngine] = useState<Engine | null>(null)
@@ -45,6 +46,14 @@ export default function App() {
       else if (e.key === 'c' || e.key === 'C') engine.clear()
       else if (e.key === 's' || e.key === 'S') s.set({ timeScale: s.timeScale < 1 ? 1 : 0.2 })
       else if (e.key === 'p' || e.key === 'P') engine.paused = !engine.paused
+      else if (e.key === 't' || e.key === 'T') {
+        const ids = Object.keys(SEASONS) as SeasonId[]
+        s.set({ season: ids[(ids.indexOf(s.season) + 1) % ids.length] })
+      }
+      else if (e.key === 'v' || e.key === 'V') {
+        const order = ['edge', 'sea', 'aerial'] as const
+        s.set({ view: order[(order.indexOf(s.view) + 1) % 3] })
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -58,7 +67,7 @@ export default function App() {
           flat
           dpr={[1, 2]}
           gl={{ antialias: false, powerPreference: 'high-performance', stencil: false }}
-          camera={{ position: [48, 17, 50], fov: 42, near: 0.1, far: 9000 }}
+          camera={{ position: [48, 17, 50], fov: 50, near: 0.1, far: 9000 }}
           onCreated={({ gl }) => { gl.toneMappingExposure = 0.66 }}
         >
           <Suspense fallback={null}>

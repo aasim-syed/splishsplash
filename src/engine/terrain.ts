@@ -106,7 +106,7 @@ export function buildTerrain(): TerrainData {
       if (h < -0.4) {
         const wet = smooth(-7, -0.4, h)
         r = 0.5 - 0.22 * wet; g = 0.46 - 0.2 * wet; b = 0.38 - 0.15 * wet // pale sand → dark wet rock
-      } else if (slope > 0.9 || h < CLIFF_TOP - 1.0) {
+      } else if (slope > 0.9 || h < 12) {
         // layered limestone/sandstone: warm strata, darker seams, white lip, algae at the waterline
         const band = 0.5 + 0.5 * Math.sin(h * 1.7 + nz * 2.5)
         const seam = Math.pow(Math.abs(Math.sin(h * 0.9 + 0.6 * fbm(z * 0.1, h * 0.2))), 18)
@@ -157,15 +157,15 @@ function grid(cols: number, rows: number, fn: (i: number, j: number) => { p: [nu
   return { positions, indices, colors }
 }
 
-function chalk(z: number, y: number, crag: number): [number, number, number] {
+function chalk(z: number, y: number, crag: number, top = 1e9): [number, number, number] {
   let r = 0.6, g = 0.58, b = 0.53
   // weathering streaks running down the face
   const streak = smooth(0.05, 0.45, fbm(z * 0.5, y * 0.04 + 5, 2))
   r -= 0.05 * streak; g -= 0.05 * streak; b -= 0.06 * streak
   // flint bands: thin dark dotted strata
   const band = Math.sin(y * 1.25 + 0.8 * fbm(z * 0.08, y * 0.1, 2))
-  const flint = smooth(0.95, 0.995, band) * smooth(-0.1, 0.4, fbm(z * 0.9, y * 0.9, 1))
-  r -= 0.42 * flint; g -= 0.42 * flint; b -= 0.4 * flint
+  const flint = smooth(0.975, 0.998, band) * smooth(-0.1, 0.4, fbm(z * 0.9, y * 0.9, 1))
+  r -= 0.22 * flint; g -= 0.22 * flint; b -= 0.2 * flint
   // recesses hold shadow-coloured grime
   const recess = smooth(0.6, 0.0, crag)
   r -= 0.06 * recess; g -= 0.07 * recess; b -= 0.05 * recess
@@ -175,13 +175,16 @@ function chalk(z: number, y: number, crag: number): [number, number, number] {
   r = r * (1 - wet * 0.45); g = g * (1 - wet * 0.4); b = b * (1 - wet * 0.42)
   r = r * (1 - algae) + 0.16 * algae; g = g * (1 - algae) + 0.21 * algae; b = b * (1 - algae) + 0.12 * algae
   const v = 0.97 + 0.06 * fbm(z * 0.9, y * 0.6, 2)
+  // turf overhanging the lip
+  const turf = smooth(top - 0.9 + 0.3 * fbm(z * 0.7, 3.3, 2), top - 0.15, y)
+  r = r * (1 - turf) + 0.26 * turf; g = g * (1 - turf) + 0.38 * turf; b = b * (1 - turf) + 0.15 * turf
   return [r * v, g * v, b * v]
 }
 
 /** High-resolution chalk cliff face draped along the coastline (heightfields can't hold a 24 m wall). */
 export function buildCliffFace(): MeshData {
-  const z0 = -70, z1 = 70, dz = 0.25
-  const yBot = -4, dy = 0.2
+  const z0 = -70, z1 = 70, dz = 0.18
+  const yBot = -4, dy = 0.15
   const cols = Math.round((z1 - z0) / dz) + 1
   const rows = Math.round((CLIFF_TOP + 1 - yBot) / dy) + 1
   const toe = -1.5
@@ -200,10 +203,12 @@ export function buildCliffFace(): MeshData {
     // buttresses & gullies: tall vertical structure (stretched in y), plus finer fracturing
     const crag01 = 0.5 + 0.5 * fbm(z * 0.3 + 3, y * 0.045, 3)
     const gully = Math.pow(0.5 + 0.5 * fbm(z * 0.7 + 11, y * 0.08, 2), 2)
-    const crag = 2.2 * crag01 + 0.4 * gully + 0.2 * (0.5 + 0.5 * fbm(z * 0.9, y * 0.7, 1)) + ledge
-    const lip = y > top - 0.6 ? 0.35 : 1
-    const x = ex + d + 1.0 + crag * lip
-    return { p: [x, y, z + 0.25 * fbm(y * 0.3, z * 0.3, 1)], c: chalk(z, y, crag01) }
+    const crag = 2.2 * crag01 + 0.4 * gully + 0.25 * (0.5 + 0.5 * fbm(z * 0.9, y * 0.7, 2)) + ledge
+    // roll the top of the face back into the plateau so there's no shelf at the lip
+    const roll = smooth(top - 1.4, top, y)
+    const xFace = ex + d + 1.0 + crag
+    const x = xFace + (ex - 0.25 - xFace) * roll
+    return { p: [x, y, z + 0.25 * fbm(y * 0.3, z * 0.3, 1)], c: chalk(z, y, crag01, top) }
   })
 }
 
@@ -225,4 +230,19 @@ export function buildStacks(): MeshData[] {
       return { p: [st.x + cx * rad, y, st.z + sz * rad], c: chalk(th * 6 + si * 30, y, 0.5 + 0.5 * n) }
     }, true)
   })
+}
+
+export type ViewId = 'edge' | 'sea' | 'aerial'
+/** Camera presets derived from the generated coastline. */
+export function viewPresets(): Record<ViewId, { pos: [number, number, number]; target: [number, number, number] }> {
+  // stand on the most seaward promontory near the middle so the receding face is in frame
+  let z0 = 0, best = -Infinity
+  for (let z = -12; z <= 12; z += 0.5) { const e = edgeX(z); if (e > best) { best = e; z0 = z } }
+  const ex = edgeX(z0)
+  return {
+    // just past the lip, as if leaning out: the drop and the receding face are in frame, throws fly out from behind you
+    edge: { pos: [ex - 3, heightAt(ex - 3, z0) + 4.5, z0 - 7], target: [ex + 30, 0, z0 + 16] },
+    sea: { pos: [48, 15, 46], target: [12, 6, -4] },
+    aerial: { pos: [-22, 58, 46], target: [24, 0, -4] },
+  }
 }

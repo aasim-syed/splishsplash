@@ -16,15 +16,17 @@ const SW = SWELL.map(([dx, dz, l, a, p]) => {
   const n = Math.hypot(dx, dz)
   return { dx: dx / n, dz: dz / n, k, w: Math.sqrt(9.81 * k), a, p }
 })
+/** sea-state multiplier (set by the season; shared with the render shader) */
+export const swellState = { scale: 1 }
 export function swellHeight(x: number, z: number, t: number) {
   let h = 0
   for (const s of SW) h += s.a * Math.sin(s.k * (s.dx * x + s.dz * z) - s.w * t + s.p)
-  return h
+  return h * swellState.scale
 }
 export function swellVel(x: number, z: number, t: number) {
   let v = 0
   for (const s of SW) v -= s.a * s.w * Math.cos(s.k * (s.dx * x + s.dz * z) - s.w * t + s.p)
-  return v
+  return v * swellState.scale
 }
 
 /**

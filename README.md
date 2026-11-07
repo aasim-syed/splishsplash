@@ -10,7 +10,10 @@ npm run test:physics   # headless check: landing accuracy and float depth vs den
 ```
 
 ## Controls
-Click the sea to throw · drag to orbit · `1–0` pick object · `Space` barrage · `S` slow‑mo · `P` pause · `C` clear
+Click the sea to throw · drag to orbit · `1–0` pick object · `Space` barrage · `S` slow‑mo · `V` camera · `T` season/time · `P` pause · `C` clear
+
+Seasons: summer golden hour, summer midday, spring morning, autumn storm (bigger swell, choppier sea), winter (snow, low sun), sunset.
+Every object has its own splash and sound: orientation-aware slaps for flat faces, line splashes for logs, tall narrow jets for cannonballs, bursting watermelons.
 
 ## Physics
 | Layer | Model |

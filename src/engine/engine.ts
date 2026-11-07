@@ -4,7 +4,7 @@ import { Particles } from './particles'
 import { buildCliffFace, buildStacks, buildTerrain, edgeX, heightAt, type MeshData, type TerrainData } from './terrain'
 import {
   OBJECT_MAP, boundingRadius, frontalArea, volumeOf, volumeSamples,
-  type ObjectDef, type VolumeSample,
+  type ObjectDef, type SplashSound, type VolumeSample,
 } from './objects'
 
 export const DT = 1 / 120
@@ -71,7 +71,7 @@ export class Engine {
   onAdd?: (b: Body) => void
   onRemove?: (b: Body) => void
   onImpact?: (i: ImpactInfo) => void
-  onSplashSound?: (energy: number, radius: number, speed: number) => void
+  onSplashSound?: (kind: SplashSound, energy: number, radius: number, speed: number, flat: number, secondary: boolean) => void
 
   static async create() {
     await RAPIER.init()
@@ -343,6 +343,39 @@ export class Engine {
 
   // ───────────────────────────── splashes ─────────────────────────────
 
+  /**
+   * Orientation-aware entry: which way the body's faces / long axis point when it hits.
+   * flat → a box face (or a log's side) slaps the surface: wide sheet, trapped air, no clean jet.
+   * line → elongated contact patch along a horizontal axis.
+   */
+  private entryGeometry(b: Body) {
+    const r = b.rb.rotation()
+    const axis = (lx: number, ly: number, lz: number) => {
+      const tx = 2 * (r.y * lz - r.z * ly), ty = 2 * (r.z * lx - r.x * lz), tz = 2 * (r.x * ly - r.y * lx)
+      return [lx + r.w * tx + (r.y * tz - r.z * ty), ly + r.w * ty + (r.z * tx - r.x * tz), lz + r.w * tz + (r.x * ty - r.y * tx)]
+    }
+    const d = b.def.dims.map((v) => v * b.scale)
+    let flat = 0, lineDir: [number, number] | null = null, lineHalf = 0
+    if (b.def.shape === 'box') {
+      const up = [axis(1, 0, 0)[1], axis(0, 1, 0)[1], axis(0, 0, 1)[1]].map(Math.abs)
+      flat = Math.max(0, (Math.max(...up) - 0.82) / 0.18)
+      // longest horizontal extent for slab-like boxes
+      const longest = d[0] >= d[2] ? 0 : 2
+      if (d[longest] > 1.6 * Math.min(d[0], d[1], d[2])) {
+        const ax = axis(longest === 0 ? 1 : 0, 0, longest === 2 ? 1 : 0)
+        const hl = Math.hypot(ax[0], ax[2])
+        if (hl > 0.5) { lineDir = [ax[0] / hl, ax[2] / hl]; lineHalf = d[longest] * hl }
+      }
+    } else if (b.def.shape === 'cylinder') {
+      const ax = axis(0, 1, 0)
+      const horiz = 1 - Math.abs(ax[1])
+      flat = Math.max(0, (horiz - 0.7) / 0.3) * 0.8
+      const hl = Math.hypot(ax[0], ax[2])
+      if (hl > 0.4) { lineDir = [ax[0] / hl, ax[2] / hl]; lineHalf = d[0] * hl }
+    }
+    return { flat, lineDir, lineHalf }
+  }
+
   private emitSplash(b: Body, x: number, z: number, ws: number, v: RAPIER.Vector) {
     const speed = Math.hypot(v.x, v.y, v.z)
     const vy = -v.y
@@ -350,75 +383,116 @@ export class Engine {
     const energy = 0.5 * b.mass * speed * speed
     const id = this.nextSplash++
     const P = this.particles
+    const S = b.def.splash
     P.peaks.set(id, ws)
+    const { flat, lineDir, lineHalf } = this.entryGeometry(b)
     // heavier-than-water bodies punch deep cavities; light ones mostly skim
     const dens = Math.min(1.25, Math.max(0.22, Math.sqrt(b.def.density / 1000)))
     const steep = Math.min(1, vy / Math.max(speed, 1e-3) + 0.15)
-    const crownN = Math.floor(Math.min(2600, 30 + 300 * R * Math.sqrt(vy) * dens * (0.6 + R)))
+    const crownN = Math.floor(Math.min(3200, (30 + 300 * R * Math.sqrt(vy) * dens * (0.6 + R)) * S.crown * (1 + 0.5 * flat)))
+    const spread = S.spread * (1 + 0.9 * flat)
+    const rise = S.rise * (1 - 0.35 * flat)
     const hx = v.x * 0.35, hz = v.z * 0.35
     const dropSize = 0.028 + 0.04 * Math.min(1.6, R + 0.3)
+    // contact patch: a disc, or a strip along a horizontal long axis
+    const base = (): [number, number, number, number] => {
+      const phi = Math.random() * Math.PI * 2
+      if (lineDir) {
+        const t = (Math.random() * 2 - 1) * lineHalf
+        const side = Math.random() < 0.5 ? -1 : 1
+        const px = -lineDir[1] * side, pz = lineDir[0] * side
+        // ends of the strip still splash radially
+        const endBlend = Math.abs(t) > lineHalf * 0.85 ? 0.6 : 0.15
+        const dx = px * (1 - endBlend) + Math.cos(phi) * endBlend
+        const dz = pz * (1 - endBlend) + Math.sin(phi) * endBlend
+        const l = Math.hypot(dx, dz) || 1
+        const w = b.def.dims[b.def.shape === 'cylinder' ? 1 : 1] * b.scale
+        return [x + lineDir[0] * t + (dx / l) * w, z + lineDir[1] * t + (dz / l) * w, dx / l, dz / l]
+      }
+      return [x + Math.cos(phi) * R, z + Math.sin(phi) * R, Math.cos(phi), Math.sin(phi)]
+    }
     // crown: emitted as a short curtain (≈0.1 s) — early fluid is fastest and thrown widest,
-    // later fluid rises slower from a wider rim → reads as a sheet, not a burst
-    const batches = 6
+    // later fluid rises slower from a wider rim → reads as a sheet, not a burst.
+    // a flat slap dumps nearly everything in the first instant, low and wide.
+    const batches = flat > 0.5 ? 3 : 6
     for (let bi = 0; bi < batches; bi++) {
       const f = bi / (batches - 1)
       const n = Math.floor((crownN * 1.4) / batches)
       const emit = () => {
         const wsn = this.water.heightAt(x, z)
         for (let i = 0; i < n; i++) {
-          const phi = Math.random() * Math.PI * 2
-          const rr = R * (0.9 + 0.45 * f + 0.15 * Math.random())
+          const [bx, bz, dx, dz] = base()
+          const grow = 1 + 0.45 * f + 0.15 * Math.random()
           const sp = 1 - 0.45 * f
-          const out = vy * (0.12 + 0.22 * Math.random() ** 1.5) * (0.6 + 0.4 * dens) * sp
-          const up = vy * (0.16 + 0.34 * Math.random()) * dens * steep * sp
+          const out = vy * (0.12 + 0.22 * Math.random() ** 1.5) * (0.6 + 0.4 * dens) * sp * spread
+          const up = vy * (0.16 + 0.34 * Math.random()) * dens * steep * sp * rise
           const rad = 0.002 + 0.008 * Math.random() * Math.min(1.5, R + 0.3)
           P.spawn(
-            x + Math.cos(phi) * rr, wsn + 0.04, z + Math.sin(phi) * rr,
-            Math.cos(phi) * out + hx * Math.random(), up, Math.sin(phi) * out + hz * Math.random(),
+            x + (bx - x) * grow, wsn + 0.04, z + (bz - z) * grow,
+            dx * out + hx * Math.random(), up, dz * out + hz * Math.random(),
             rad, dropSize * (0.5 + Math.random() * 0.8), 6, false, id,
           )
         }
       }
       if (bi === 0) emit()
-      else this.schedule(f * 0.1, emit)
+      else this.schedule(f * (flat > 0.5 ? 0.04 : 0.1), emit)
     }
     // mist
-    const mistN = Math.floor(crownN * 0.12)
+    const mistN = Math.floor(crownN * 0.12 * S.mist * (1 + flat))
     for (let i = 0; i < mistN; i++) {
-      const phi = Math.random() * Math.PI * 2
-      const out = vy * 0.25 * Math.random()
+      const [bx, bz, dx, dz] = base()
+      const out = vy * 0.25 * Math.random() * spread
       P.spawn(
-        x + Math.cos(phi) * R, ws + 0.1, z + Math.sin(phi) * R,
-        Math.cos(phi) * out, vy * 0.35 * Math.random() * dens, Math.sin(phi) * out,
-        0.0005, 0.35 + R * 0.8 * Math.random(), 1.0 + Math.random() * 1.5, true, -1,
+        bx, ws + 0.1, bz,
+        dx * out, vy * 0.35 * Math.random() * dens * rise, dz * out,
+        0.0005, (0.35 + R * 0.8 * Math.random()) * (0.8 + 0.4 * S.mist), 1.0 + Math.random() * 1.5 * S.mist, true, -1,
       )
     }
-    this.water.addFoam(x, z, 1.1, R * 2.6 + 0.4)
-    // Worthington jet when the air cavity collapses (deep-penetrating bodies)
-    if (dens > 0.6 && vy > 3) {
+    // solid debris (melon pulp & rind, ice shards)
+    if (S.debris && speed > 10) {
+      const n = Math.floor(S.debris.n * Math.min(1.5, speed / 20) * b.scale)
+      const t = b.rb.translation()
+      for (let i = 0; i < n; i++) {
+        const phi = Math.random() * Math.PI * 2
+        const out = speed * (0.05 + 0.25 * Math.random())
+        const col = S.debris.colors[Math.floor(Math.random() * S.debris.colors.length)]
+        P.spawn(
+          t.x + Math.cos(phi) * R * 0.6, Math.max(t.y, ws) + 0.05, t.z + Math.sin(phi) * R * 0.6,
+          Math.cos(phi) * out + hx, vy * (0.1 + 0.4 * Math.random()), Math.sin(phi) * out + hz,
+          0.01 + 0.03 * Math.random(), (0.04 + 0.1 * Math.random()) * b.scale, 5, 2, id, col,
+        )
+      }
+    }
+    this.water.addFoam(x, z, 1.1, (lineDir ? lineHalf : 0) + R * 2.6 * (1 + 0.4 * flat) + 0.4)
+    // Worthington jet when the air cavity seals and collapses — needs a clean, deep entry
+    const jetStrength = S.jet * (1 - 0.85 * flat) * (lineDir ? 0.5 : 1)
+    if (dens > 0.6 && vy > 3 && jetStrength > 0.05) {
       const delay = 0.12 + 0.22 * Math.sqrt(R) + 0.004 * vy
-      const jetN = Math.floor(crownN * 0.5)
-      const jetV = Math.sqrt(vy) * Math.sqrt(R + 0.15) * 2.5 * Math.min(1.2, dens)
+      const jetN = Math.floor(crownN * 0.5 * Math.min(1.5, jetStrength))
+      const jetV = Math.sqrt(vy) * Math.sqrt(R + 0.15) * 2.5 * Math.min(1.2, dens) * Math.sqrt(jetStrength)
+      const jw = S.jetWidth
       this.schedule(delay, () => {
         const wsn = this.water.heightAt(x, z)
         for (let i = 0; i < jetN; i++) {
           const a = Math.random() * Math.PI * 2
-          const rr = R * 0.35 * Math.random()
-          const spread = 0.6 + 0.6 * R
+          const rr = R * 0.35 * Math.random() * jw
+          const spr = (0.6 + 0.6 * R) * jw
           const k = Math.random()
           P.spawn(
             x + Math.cos(a) * rr, wsn, z + Math.sin(a) * rr,
-            Math.cos(a) * spread * Math.random(), jetV * (0.45 + 0.6 * k), Math.sin(a) * spread * Math.random(),
+            Math.cos(a) * spr * Math.random(), jetV * (0.45 + 0.6 * k), Math.sin(a) * spr * Math.random(),
             0.004 + 0.014 * Math.random(), dropSize * (0.7 + Math.random()), 6, false, id,
           )
         }
-        // collapse pushes water up at the center
         this.water.addVolume(x, z, 0.25 * b.volume, R)
         this.water.addFoam(x, z, 0.6, R * 1.5 + 0.3)
+        this.onSplashSound?.('plunk', energy * 0.05 * jetStrength, R * 0.6, jetV, 0, true)
       })
     }
+    // fruit bursts on a hard landing
+    if (S.burst && speed > 12) this.schedule(0.02, () => this.bodies.includes(b) && this.removeBody(b))
     this.shake = Math.min(1.2, this.shake + Math.log10(1 + energy) / 7)
-    this.onSplashSound?.(energy, R, vy)
+    this.onSplashSound?.(S.sound, energy, R, vy, flat, false)
     const info: ImpactInfo = {
       splashId: id, label: b.def.label, emoji: b.def.emoji, speed, energy, mass: b.mass, peak: 0, at: this.simTime,
     }

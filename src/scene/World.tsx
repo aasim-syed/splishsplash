@@ -8,65 +8,82 @@ import { Sky } from 'three/examples/jsm/objects/Sky.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { Body, Engine } from '@/engine/engine'
 import { useStore } from '@/store'
+import { viewPresets } from '@/engine/terrain'
 import { playSplash } from '@/engine/audio'
-import { makeFarOcean, makeWaterMaterial, SUN_DIR } from './waterMaterial'
+import { makeFarOcean, makeWaterMaterial } from './waterMaterial'
+import { SEASONS, SUN_COLOR, SUN_DIR, applyShared, sunFrom, type Atmos } from './atmosphere'
+import { swellState } from '@/engine/water'
 import { geometryFor, materialFor } from './meshes'
 import { makeTerrainMaterial } from './terrainMaterial'
 import { WaterPasses } from './waterPasses'
 import { makeClouds } from './clouds'
 
-const SKY = { turbidity: 1.8, rayleigh: 2.6, mieCoefficient: 0.003, mieDirectionalG: 0.86 }
 export const HOME_TARGET = new THREE.Vector3(12, 5, -4)
+const VIEWS = viewPresets()
 
 function makeSky() {
   const sky = new Sky()
   sky.scale.setScalar(4500)
-  const u = sky.material.uniforms
-  u.turbidity.value = SKY.turbidity
-  u.rayleigh.value = SKY.rayleigh
-  u.mieCoefficient.value = SKY.mieCoefficient
-  u.mieDirectionalG.value = SKY.mieDirectionalG
-  u.sunPosition.value.copy(SUN_DIR)
   return sky
+}
+function setSky(sky: Sky, a: Atmos) {
+  const u = sky.material.uniforms
+  u.turbidity.value = a.sky.turbidity
+  u.rayleigh.value = a.sky.rayleigh
+  u.mieCoefficient.value = a.sky.mieCoefficient
+  u.mieDirectionalG.value = a.sky.mieDirectionalG
+  u.sunPosition.value.copy(SUN_DIR)
 }
 
 export function World({ engine }: { engine: Engine }) {
   const gl = useThree((s) => s.gl)
   const scene = useThree((s) => s.scene)
 
-  // Sky → cubemap once: exact sky reflections in the water + PBR environment for everything else
+  const season = useStore((st) => st.season)
+  const atmos = SEASONS[season]
+
+  // Sky (+clouds) → cubemap: exact sky reflections in the water + PBR environment for everything else.
   const env = useMemo(() => {
     const skyScene = new THREE.Scene()
-    skyScene.add(makeSky(), makeClouds(SUN_DIR).mesh)
+    const skySky = makeSky()
+    skyScene.add(skySky, makeClouds(SUN_DIR).mesh)
     const rt = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter })
     const cc = new THREE.CubeCamera(1, 10000, rt)
-    cc.update(gl, skyScene)
-    const pmrem = new THREE.PMREMGenerator(gl)
-    const pm = pmrem.fromCubemap(rt.texture).texture
-    pmrem.dispose()
-    return { cube: rt.texture, pm }
-  }, [gl])
+    return { cube: rt.texture, rt, cc, skyScene, skySky }
+  }, [])
 
   const sky = useMemo(makeSky, [])
   const clouds = useMemo(() => makeClouds(SUN_DIR), [])
   useFrame(({ clock }) => { clouds.mat.uniforms.uTime.value = clock.elapsedTime })
 
+  // season → sun, sky, clouds, fog, exposure, sea state; re-bake the environment
   useEffect(() => {
-    scene.environment = env.pm
-    scene.environmentIntensity = 0.75
-    scene.fog = new THREE.Fog('#c4d2de', 180, 1600)
-    return () => { scene.environment = null }
-  }, [scene, env])
+    applyShared(atmos)
+    swellState.scale = atmos.swell
+    setSky(sky, atmos)
+    setSky(env.skySky, atmos)
+    env.cc.update(gl, env.skyScene)
+    const pmrem = new THREE.PMREMGenerator(gl)
+    const pm = pmrem.fromCubemap(env.cube).texture
+    pmrem.dispose()
+    scene.environment = pm
+    scene.environmentIntensity = atmos.env
+    scene.fog = new THREE.Fog(atmos.fog[0], atmos.fog[1], atmos.fog[2])
+    gl.toneMappingExposure = atmos.exposure
+    return () => { pm.dispose() }
+  }, [atmos, gl, scene, env, sky])
+
+  const sunPos = useMemo(() => sunFrom(atmos).multiplyScalar(160).add(HOME_TARGET), [atmos])
 
   return (
     <>
       <primitive object={sky} />
       <primitive object={clouds.mesh} />
-      <hemisphereLight args={['#c4dcf5', '#5b5040', 0.6]} />
+      <hemisphereLight key={season} args={atmos.hemi} />
       <directionalLight
-        position={SUN_DIR.clone().multiplyScalar(140).add(HOME_TARGET)}
-        intensity={2.5}
-        color="#ffe4c4"
+        position={sunPos}
+        intensity={atmos.sunIntensity}
+        color={new THREE.Color(...atmos.sunColor)}
         castShadow
         shadow-mapSize={[4096, 4096]}
         shadow-camera-left={-80}
@@ -74,7 +91,7 @@ export function World({ engine }: { engine: Engine }) {
         shadow-camera-top={80}
         shadow-camera-bottom={-80}
         shadow-camera-near={10}
-        shadow-camera-far={320}
+        shadow-camera-far={400}
         shadow-bias={-0.0003}
         shadow-normalBias={0.05}
       >
@@ -88,9 +105,9 @@ export function World({ engine }: { engine: Engine }) {
       <Stepper engine={engine} />
       <OrbitControls
         makeDefault
-        target={HOME_TARGET.toArray()}
+        target={VIEWS.sea.target}
         maxPolarAngle={Math.PI * 0.48}
-        minDistance={5}
+        minDistance={3}
         maxDistance={180}
         enableDamping
         dampingFactor={0.07}
@@ -118,7 +135,9 @@ function Stepper({ engine }: { engine: Engine }) {
   useEffect(() => { engine.timeScale = timeScale }, [engine, timeScale])
   useEffect(() => {
     engine.onImpact = (i) => pushImpact(i)
-    engine.onSplashSound = sound ? (e, r, v) => playSplash(e, r, v, Math.max(0.35, engine.timeScale ** 0.5)) : undefined
+    engine.onSplashSound = sound
+      ? (k, e, r, v, f, sec) => playSplash(k, e, r, v, f, sec, Math.max(0.35, engine.timeScale ** 0.5))
+      : undefined
   }, [engine, sound, pushImpact])
   useFrame((_, dt) => {
     engine.update(dt)
@@ -137,6 +156,24 @@ function Stepper({ engine }: { engine: Engine }) {
 /** Follows the last throw a little, then eases back; adds impact shake. */
 function CameraRig({ engine }: { engine: Engine }) {
   const track = useStore((s) => s.track)
+  const view = useStore((s) => s.view)
+  const anim = useRef<{ p0: THREE.Vector3; t0: THREE.Vector3; p1: THREE.Vector3; t1: THREE.Vector3; k: number } | null>(null)
+  const first = useRef(true)
+  const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls) as unknown as OrbitControlsImpl | null
+  useEffect(() => {
+    if (!controls) return
+    const v = VIEWS[view]
+    const p1 = new THREE.Vector3(...v.pos), t1 = new THREE.Vector3(...v.target)
+    if (first.current) {
+      first.current = false
+      camera.position.copy(p1)
+      controls.target.copy(t1)
+      controls.update()
+      return
+    }
+    anim.current = { p0: camera.position.clone(), t0: controls.target.clone(), p1, t1, k: 0 }
+  }, [view, camera, controls])
   const home = useRef<THREE.Vector3 | null>(null)
   const followed = useRef<Body | null>(null)
   const desired = useMemo(() => new THREE.Vector3(), [])
@@ -144,6 +181,14 @@ function CameraRig({ engine }: { engine: Engine }) {
   useFrame((state, dt) => {
     const controls = state.controls as unknown as OrbitControlsImpl | null
     if (!controls) return
+    const a = anim.current
+    if (a) {
+      a.k = Math.min(1, a.k + dt / 1.6)
+      const e = a.k < 0.5 ? 4 * a.k ** 3 : 1 - (-2 * a.k + 2) ** 3 / 2
+      state.camera.position.lerpVectors(a.p0, a.p1, e)
+      controls.target.lerpVectors(a.t0, a.t1, e)
+      if (a.k >= 1) anim.current = null
+    }
     const b = engine.lastThrown
     if (b !== followed.current) {
       followed.current = b
@@ -336,6 +381,8 @@ attribute vec3 iVel;
 attribute float iSize;
 attribute float iAlpha;
 attribute float iMist;
+attribute vec3 iColor;
+varying vec3 vColor;
 uniform vec3 uSun;
 varying vec2 vQ;
 varying float vL;
@@ -348,7 +395,8 @@ void main() {
   vec3 vv = mat3(viewMatrix) * iVel;
   float sp = length(vv.xy);
   float R = iSize * 0.5;
-  float streak = iMist > 0.5 ? 0.0 : sp * 0.024;
+  float streak = iMist > 0.5 ? (iMist > 1.5 ? sp * 0.006 : 0.0) : sp * 0.024;
+  vColor = iColor;
   float L = R + streak * 0.5;
   vec2 ax = sp > 1e-4 ? vv.xy / sp : vec2(1.0, 0.0);
   vec2 ay = vec2(-ax.y, ax.x);
@@ -364,6 +412,7 @@ void main() {
 `
 const sprayFrag = /* glsl */ `
 uniform vec3 uSunColor;
+varying vec3 vColor;
 varying vec2 vQ;
 varying float vL;
 varying float vR;
@@ -374,7 +423,12 @@ void main() {
   float dx = max(abs(vQ.x) - (vL - vR), 0.0);
   float d = length(vec2(dx, vQ.y)) / vR;
   if (d > 1.0) discard;
-  if (vMist > 0.5) {
+  if (vMist > 1.5) {
+    // solid debris chunk: lit sphere-ish blob in its own colour
+    vec3 n = vec3(vQ.x / vL, vQ.y / vR, sqrt(max(0.0, 1.0 - d * d)));
+    float diff = 0.45 + 0.55 * max(dot(n, normalize(vec3(0.4, 0.6, 0.7))), 0.0);
+    gl_FragColor = vec4(vColor * diff * 0.9 + uSunColor * vFwd * 0.3, vAlpha * (1.0 - smoothstep(0.8, 1.0, d)));
+  } else if (vMist > 0.5) {
     float a = pow(1.0 - d * d, 2.0) * vAlpha;
     vec3 c = vec3(0.86, 0.88, 0.9) + uSunColor * vFwd * 0.6;
     gl_FragColor = vec4(c, a);
@@ -399,13 +453,14 @@ function Spray({ engine }: { engine: Engine }) {
     g.setAttribute('iSize', ia(P.rSize, 1))
     g.setAttribute('iAlpha', ia(P.rAlpha, 1))
     g.setAttribute('iMist', ia(P.rMist, 1))
+    g.setAttribute('iColor', ia(P.rColor, 3))
     g.instanceCount = 0
     const m = new THREE.ShaderMaterial({
       vertexShader: sprayVert,
       fragmentShader: sprayFrag,
       transparent: true,
       depthWrite: false,
-      uniforms: { uSun: { value: SUN_DIR.clone() }, uSunColor: { value: new THREE.Color(1, 0.88, 0.72) } },
+      uniforms: { uSun: { value: SUN_DIR }, uSunColor: { value: SUN_COLOR } },
     })
     return { geo: g, mat: m }
   }, [P])
@@ -413,7 +468,7 @@ function Spray({ engine }: { engine: Engine }) {
     P.pack()
     const n = P.rCount
     geo.instanceCount = n
-    for (const name of ['iPos', 'iVel', 'iSize', 'iAlpha', 'iMist']) {
+    for (const name of ['iPos', 'iVel', 'iSize', 'iAlpha', 'iMist', 'iColor']) {
       const a = geo.attributes[name] as THREE.InstancedBufferAttribute
       a.clearUpdateRanges()
       a.addUpdateRange(0, Math.max(1, n) * a.itemSize)

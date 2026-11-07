@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import { SWELL } from '@/engine/water'
 
-// Late-afternoon sun from over the sea: rakes across the cliff face, glitter off to the side.
-export const SUN_DIR = new THREE.Vector3(0.48, 0.3, -0.82).normalize()
+import { ATMOS_U, SUN_COLOR, SUN_DIR } from './atmosphere'
+export { SUN_DIR }
 
 const swellGLSL = (() => {
   const lines = SWELL.map(([dx, dz, l, a, p]) => {
@@ -26,6 +26,7 @@ const vert = /* glsl */ `
 attribute float aFoam;
 attribute float aFloor;
 uniform float uSimTime;
+uniform float uSwellScale;
 uniform mat4 uReflMat;
 varying vec4 vReflCoord;
 varying float vViewZ;
@@ -38,7 +39,7 @@ ${swellGLSL}
 #include <fog_pars_vertex>
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
-  vec3 sw = swell(wp.xz, uSimTime);
+  vec3 sw = swell(wp.xz, uSimTime) * uSwellScale;
   wp.y += sw.x;
   // combine simulated slope (from the CPU normal) with the analytic swell slope
   vec3 n0 = normalize(normal);
@@ -70,6 +71,8 @@ uniform vec2 uRes;
 uniform float uNear;
 uniform float uFar2;
 uniform float uPasses;
+uniform float uChop;
+uniform vec3 uWaterTint;
 varying vec4 vReflCoord;
 varying float vViewZ;
 varying vec3 vWorld;
@@ -113,7 +116,7 @@ void main() {
   if (uFar > 0.5 && vWorld.x > uRect.x + 0.5 && vWorld.z > uRect.y + 0.5 && vWorld.x < uRect.z - 0.5 && vWorld.z < uRect.w - 0.5) discard;
   vec3 V = normalize(cameraPosition - vWorld);
   float dist = length(cameraPosition - vWorld);
-  vec2 ds = chop(vWorld.xz, uTime, dist * 0.006);
+  vec2 ds = chop(vWorld.xz, uTime, dist * 0.006) * uChop;
   vec3 N = normalize(vNormal + vec3(-ds.x, 0.0, -ds.y));
 
   float cosT = max(dot(N, V), 0.0);
@@ -121,7 +124,7 @@ void main() {
 
   vec3 R = reflect(-V, N);
   R.y = abs(R.y);
-  vec3 skyR = textureLod(uEnv, R, 1.0 + 3.0 * clamp(dist / 500.0, 0.0, 1.0)).rgb;
+  vec3 skyR = textureLod(uEnv, R, 0.5 + 2.5 * clamp(dist / 600.0, 0.0, 1.0)).rgb;
   float sd = max(dot(R, uSun), 0.0);
   vec3 spec = uSunColor * (pow(sd, 2400.0) * 70.0 + pow(sd, 260.0) * 2.4 + pow(sd, 20.0) * 0.06);
 
@@ -131,8 +134,8 @@ void main() {
   float alpha = 1.0;
   if (uPasses > 0.5) {
     // planar reflection, rippled by the surface normal
-    vec2 ruv = vReflCoord.xy / vReflCoord.w + N.xz * vec2(0.09, 0.14);
-    vec4 rt = textureLod(uRefl, ruv, 0.6 + clamp(dist / 100.0, 0.0, 2.5));
+    vec2 ruv = vReflCoord.xy / vReflCoord.w + N.xz * vec2(0.05, 0.08);
+    vec4 rt = textureLod(uRefl, ruv, 0.15 + clamp(dist / 260.0, 0.0, 1.6));
     reflCol = mix(skyR, rt.rgb, rt.a);
 
     // refraction: what's under the surface, absorbed by the real water thickness along the ray
@@ -151,7 +154,7 @@ void main() {
     vec3 scatter = vec3(0.008, 0.045, 0.06) * (0.55 + 0.45 * max(uSun.y, 0.0)) * uSunColor;
     float sss = pow(max(dot(V, -uSun + N * 0.5), 0.0), 4.0) * clamp(vHeight * 1.5 + 0.4, 0.0, 1.0);
     scatter += vec3(0.02, 0.16, 0.13) * sss * uSunColor * 0.35;
-    body = under * trans + scatter * (1.0 - trans);
+    body = (under * trans + scatter * (1.0 - trans)) * uWaterTint;
   } else {
     vec3 deep = vec3(0.003, 0.022, 0.04);
     vec3 shallow = vec3(0.025, 0.17, 0.17);
@@ -185,8 +188,8 @@ export function makeWaterMaterial(far: boolean, rect: [number, number, number, n
     uniforms: THREE.UniformsUtils.merge([
       THREE.UniformsLib.fog,
       {
-        uSun: { value: SUN_DIR.clone() },
-        uSunColor: { value: new THREE.Color(1.0, 0.88, 0.72) },
+        uSun: { value: null },
+        uSunColor: { value: null },
         uTime: { value: 0 },
         uSimTime: { value: 0 },
         uRect: { value: new THREE.Vector4(...rect) },
@@ -205,6 +208,12 @@ export function makeWaterMaterial(far: boolean, rect: [number, number, number, n
   })
   // set after merge: mergeUniforms() refuses to clone render-target textures and would null it
   m.uniforms.uEnv.value = env
+  // shared objects: season changes propagate without touching materials
+  m.uniforms.uSun = { value: SUN_DIR }
+  m.uniforms.uSunColor = { value: SUN_COLOR }
+  m.uniforms.uChop = ATMOS_U.uChop
+  m.uniforms.uSwellScale = ATMOS_U.uSwellScale
+  m.uniforms.uWaterTint = ATMOS_U.uWaterTint
   return m
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Crosshair, Pause, Play, RotateCcw, SlidersHorizontal, Sparkles, Timer, Volume2, VolumeX } from 'lucide-react'
+import { Bird, Crosshair, Sun, Pause, PersonStanding, Ship, Play, RotateCcw, SlidersHorizontal, Sparkles, Timer, Volume2, VolumeX } from 'lucide-react'
 import type { Engine } from '@/engine/engine'
 import { OBJECTS, OBJECT_MAP, volumeOf } from '@/engine/objects'
 import { useStore } from '@/store'
@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { SEASONS, type SeasonId } from '@/scene/atmosphere'
 
 const glass = 'border border-white/10 bg-neutral-950/35 backdrop-blur-xl shadow-[0_8px_40px_-12px_rgba(0,0,0,0.6)]'
 
@@ -75,6 +76,46 @@ export function Dock({ engine, onBarrage }: { engine: Engine; onBarrage: () => v
             </Tooltip>
           )
         })}
+        <div className="mx-1.5 h-8 w-px bg-white/10" />
+        <IconButton label="Thrower's view (cliff top)" kbd="V" active={s.view === 'edge'} onClick={() => s.set({ view: 'edge' })}><PersonStanding /></IconButton>
+        <IconButton label="View from the sea" kbd="V" active={s.view === 'sea'} onClick={() => s.set({ view: 'sea' })}><Ship /></IconButton>
+        <IconButton label="Aerial" kbd="V" active={s.view === 'aerial'} onClick={() => s.set({ view: 'aerial' })}><Bird /></IconButton>
+        <Popover>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <button className="grid size-10 place-items-center rounded-xl text-white/70 transition hover:bg-white/10 hover:text-white data-[state=open]:bg-white/15 data-[state=open]:text-white [&_svg]:size-[18px]">
+                  <Sun />
+                </button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="top">Season & time <kbd className="ml-2 rounded border border-white/15 px-1 font-mono text-[10px] text-white/60">T</kbd></TooltipContent>
+          </Tooltip>
+          <PopoverContent side="top" align="center" className="w-64 p-2">
+            <div className="px-2 pb-2 pt-1 text-[10px] uppercase tracking-[0.18em] text-white/45">Season & light</div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(Object.keys(SEASONS) as SeasonId[]).map((id) => {
+                const a = SEASONS[id]
+                return (
+                  <button
+                    key={id}
+                    onClick={() => s.set({ season: id })}
+                    className={cn(
+                      'group overflow-hidden rounded-lg border text-left transition',
+                      s.season === id ? 'border-white/50' : 'border-white/10 hover:border-white/25',
+                    )}
+                  >
+                    <div className="h-10" style={{ background: `linear-gradient(160deg, ${a.swatch[0]}, ${a.swatch[1]})` }} />
+                    <div className="px-2 py-1.5">
+                      <div className="text-xs text-white">{a.label}</div>
+                      <div className="text-[10px] text-white/50">{a.sub}</div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </PopoverContent>
+        </Popover>
         <div className="mx-1.5 h-8 w-px bg-white/10" />
         <IconButton label="Barrage" kbd="Space" onClick={onBarrage}><Sparkles /></IconButton>
         <IconButton label="Slow motion" kbd="S" active={s.timeScale < 1} onClick={() => s.set({ timeScale: s.timeScale < 1 ? 1 : 0.2 })}>

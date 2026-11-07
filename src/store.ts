@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { ImpactInfo } from '@/engine/engine'
+import type { ViewId } from '@/engine/terrain'
+import type { SeasonId } from '@/scene/atmosphere'
 
 interface State {
   selected: string
@@ -10,6 +12,8 @@ interface State {
   sound: boolean
   showArc: boolean
   track: boolean
+  view: ViewId
+  season: SeasonId
   thrown: boolean
   thumbs: Record<string, string>
   impacts: ImpactInfo[]
@@ -27,6 +31,8 @@ export const useStore = create<State>((set) => ({
   sound: true,
   showArc: true,
   track: false,
+  view: 'sea',
+  season: 'golden',
   thrown: false,
   thumbs: {},
   impacts: [],

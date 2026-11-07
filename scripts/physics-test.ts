@@ -18,8 +18,9 @@ for (let s = 0; s < 120 * 25; s++) {
   for (const b of e.bodies) if (b.submerged > 0.004 && !landed.has(b.id)) { const t = b.rb.translation(); landed.set(b.id, [t.x, t.z]) }
 }
 const ms = performance.now() - t0
-e.bodies.forEach((b, i) => {
-  const t = b.rb.translation(); const [tx, , tz] = [targets[i][1], 0, targets[i][2]]
+e.bodies.forEach((b) => {
+  const tg = targets.find((q) => q[0] === b.def.id)!
+  const t = b.rb.translation(); const [tx, , tz] = [tg[1], 0, tg[2]]
   const l = landed.get(b.id)
   console.log(b.def.id.padEnd(10), 'land err', l ? Math.hypot(l[0] - tx, l[1] - tz).toFixed(2) : '-', 'y', t.y.toFixed(2), 'sub', b.submerged.toFixed(2), 'expected', Math.min(1, b.def.density / 1000).toFixed(2), 'v', Math.hypot(b.rb.linvel().x, b.rb.linvel().y, b.rb.linvel().z).toFixed(2))
 })
