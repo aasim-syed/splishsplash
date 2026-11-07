@@ -9,6 +9,8 @@ import { Brand, Dock, Stats, Telemetry } from '@/components/Hud'
 import { renderThumbnails } from '@/scene/thumbnails'
 import { SEASONS, type SeasonId } from '@/scene/atmosphere'
 
+const CAPTURE = new URLSearchParams(location.search).has('capture')
+
 export default function App() {
   const [engine, setEngine] = useState<Engine | null>(null)
   useEffect(() => {
@@ -16,6 +18,11 @@ export default function App() {
     Engine.create().then((e) => {
       if (!alive) return
       ;(window as unknown as { __engine: Engine }).__engine = e
+      if (CAPTURE) {
+        e.paused = true
+        useStore.getState().set({ thrown: true })
+        ;(window as unknown as Record<string, unknown>).__store = useStore
+      }
       setEngine(e)
       useStore.getState().set({ thumbs: renderThumbnails() })
     })
@@ -65,8 +72,9 @@ export default function App() {
         <Canvas
           shadows="soft"
           flat
+          frameloop={CAPTURE ? 'demand' : 'always'}
           dpr={[1, 2]}
-          gl={{ antialias: false, powerPreference: 'high-performance', stencil: false }}
+          gl={{ antialias: false, powerPreference: 'high-performance', stencil: false, preserveDrawingBuffer: CAPTURE }}
           camera={{ position: [48, 17, 50], fov: 50, near: 0.1, far: 9000 }}
           onCreated={({ gl }) => { gl.toneMappingExposure = 0.66 }}
         >
@@ -81,7 +89,7 @@ export default function App() {
         <>
           <Brand />
           <Telemetry engine={engine} />
-          <Stats />
+          {!CAPTURE && <Stats />}
           <Dock engine={engine} onBarrage={barrage} />
         </>
       )}

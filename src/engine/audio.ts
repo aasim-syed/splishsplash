@@ -195,3 +195,10 @@ export function synthSplash(p: SplashAudio, sr: number): Float32Array {
   for (let i = 0; i < fade; i++) out[out.length - 1 - i] *= i / fade
   return out
 }
+
+/** Pure synthesis of one small-droplet bubble ping (spray patter). */
+export function synthPing(r: number, sr: number): Float32Array {
+  const out = new Float32Array(Math.floor(0.06 * sr))
+  bubble(out, sr, 0, r, 1)
+  return out
+}

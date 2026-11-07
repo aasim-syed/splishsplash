@@ -57,7 +57,8 @@ export function World({ engine }: { engine: Engine }) {
   const sky = useMemo(makeSky, [])
   const sun = useMemo(makeSun, [])
   const clouds = useMemo(() => makeClouds(SUN_DIR), [])
-  useFrame(({ clock }) => { clouds.mat.uniforms.uTime.value = clock.elapsedTime })
+  // all shader clocks follow simulation time → slow-mo slows the sea and sky too, captures are deterministic
+  useFrame(() => { clouds.mat.uniforms.uTime.value = engine.simTime })
 
   // season → sun, sky, clouds, fog, exposure, sea state; re-bake the environment
   useEffect(() => {
@@ -166,6 +167,11 @@ function Stepper({ engine }: { engine: Engine }) {
 
 /** Follows the last throw a little, then eases back; adds impact shake. */
 function CameraRig({ engine }: { engine: Engine }) {
+  const invalidate = useThree((s) => s.invalidate)
+  useEffect(() => {
+    ;(window as unknown as Record<string, unknown>).__frame = () =>
+      new Promise<void>((res) => { invalidate(); requestAnimationFrame(() => requestAnimationFrame(() => res())) })
+  }, [invalidate])
   const track = useStore((s) => s.track)
   const view = useStore((s) => s.view)
   const anim = useRef<{ p0: THREE.Vector3; t0: THREE.Vector3; p1: THREE.Vector3; t1: THREE.Vector3; k: number } | null>(null)
@@ -192,6 +198,7 @@ function CameraRig({ engine }: { engine: Engine }) {
   useFrame((state, dt) => {
     const controls = state.controls as unknown as OrbitControlsImpl | null
     if (!controls) return
+    ;(window as unknown as Record<string, unknown>).__rig = { camera: state.camera, controls }
     const a = anim.current
     if (a) {
       a.k = Math.min(1, a.k + dt / 1.6)
@@ -312,7 +319,7 @@ function Water({ engine, env }: { engine: Engine; env: THREE.Texture }) {
     }
   }, [w, env])
 
-  useFrame(({ clock }) => {
+  useFrame(() => {
     const N = w.N
     const pos = geo.attributes.position.array as Float32Array
     const nrm = geo.attributes.normal.array as Float32Array
@@ -338,7 +345,7 @@ function Water({ engine, env }: { engine: Engine; env: THREE.Texture }) {
     geo.attributes.normal.needsUpdate = true
     geo.attributes.aFoam.needsUpdate = true
     for (const m of [mat, farMat]) {
-      m.uniforms.uTime.value = clock.elapsedTime
+      m.uniforms.uTime.value = w.time
       m.uniforms.uSimTime.value = w.time
     }
   })
