@@ -27,6 +27,9 @@ export class Particles {
   count = 0
   /** peak height reached per splash id (for stats) */
   peaks = new Map<number, number>()
+  /** droplets that re-entered the sea since last drain (for spray patter audio) */
+  landed = 0
+  landedR = 0
 
   // render buffers (compacted)
   rPos = new Float32Array(this.cap * 3)
@@ -86,6 +89,8 @@ export class Particles {
           if (y < ws) {
             if (y < water.floorAt(x, z)) { this.life[i] = 0; continue }
             if (this.mist[i] !== 1) {
+              this.landed++
+              this.landedR += r
               // droplet impact crater: volume scales with drop volume × impact speed
               const vol = (4 / 3) * Math.PI * r * r * r
               water.addVolume(x, z, -Math.min(0.03, vol * (-vy) * 55))

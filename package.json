@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test:physics": "tsx scripts/physics-test.ts"
+    "test:physics": "tsx scripts/physics-test.ts",
+    "sfx": "tsx scripts/render-sfx.ts"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

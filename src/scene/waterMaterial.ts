@@ -173,7 +173,7 @@ void main() {
   col = mix(col, foamCol, foam);
   col += spec * (1.0 - foam);
 
-  gl_FragColor = vec4(col, alpha);
+  gl_FragColor = vec4(min(col, vec3(48.0)), alpha); // keep HDR glints finite in half-float targets
   #include <colorspace_fragment>
   #include <fog_fragment>
 }

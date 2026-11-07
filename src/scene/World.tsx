@@ -9,7 +9,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { Body, Engine } from '@/engine/engine'
 import { useStore } from '@/store'
 import { viewPresets } from '@/engine/terrain'
-import { playSplash } from '@/engine/audio'
+import { patter, playSplash } from '@/engine/audio'
 import { makeFarOcean, makeWaterMaterial } from './waterMaterial'
 import { SEASONS, SUN_COLOR, SUN_DIR, applyShared, sunFrom, type Atmos } from './atmosphere'
 import { swellState } from '@/engine/water'
@@ -17,6 +17,7 @@ import { geometryFor, materialFor } from './meshes'
 import { makeTerrainMaterial } from './terrainMaterial'
 import { WaterPasses } from './waterPasses'
 import { makeClouds } from './clouds'
+import { makeSun } from './sun'
 
 export const HOME_TARGET = new THREE.Vector3(12, 5, -4)
 const VIEWS = viewPresets()
@@ -33,6 +34,7 @@ function setSky(sky: Sky, a: Atmos) {
   u.mieCoefficient.value = a.sky.mieCoefficient
   u.mieDirectionalG.value = a.sky.mieDirectionalG
   u.sunPosition.value.copy(SUN_DIR)
+  u.showSunDisc.value = 0
 }
 
 export function World({ engine }: { engine: Engine }) {
@@ -53,6 +55,7 @@ export function World({ engine }: { engine: Engine }) {
   }, [])
 
   const sky = useMemo(makeSky, [])
+  const sun = useMemo(makeSun, [])
   const clouds = useMemo(() => makeClouds(SUN_DIR), [])
   useFrame(({ clock }) => { clouds.mat.uniforms.uTime.value = clock.elapsedTime })
 
@@ -70,14 +73,16 @@ export function World({ engine }: { engine: Engine }) {
     scene.environmentIntensity = atmos.env
     scene.fog = new THREE.Fog(atmos.fog[0], atmos.fog[1], atmos.fog[2])
     gl.toneMappingExposure = atmos.exposure
+    sun.mat.uniforms.uIntensity.value = atmos.sunDisc
     return () => { pm.dispose() }
-  }, [atmos, gl, scene, env, sky])
+  }, [atmos, gl, scene, env, sky, sun])
 
   const sunPos = useMemo(() => sunFrom(atmos).multiplyScalar(160).add(HOME_TARGET), [atmos])
 
   return (
     <>
       <primitive object={sky} />
+      <primitive object={sun.mesh} />
       <primitive object={clouds.mesh} />
       <hemisphereLight key={season} args={atmos.hemi} />
       <directionalLight
@@ -136,11 +141,17 @@ function Stepper({ engine }: { engine: Engine }) {
   useEffect(() => {
     engine.onImpact = (i) => pushImpact(i)
     engine.onSplashSound = sound
-      ? (k, e, r, v, f, sec) => playSplash(k, e, r, v, f, sec, Math.max(0.35, engine.timeScale ** 0.5))
+      ? (p) => playSplash(p, Math.max(0.35, engine.timeScale ** 0.5))
       : undefined
   }, [engine, sound, pushImpact])
   useFrame((_, dt) => {
     engine.update(dt)
+    const P = engine.particles
+    if (P.landed > 0) {
+      if (useStore.getState().sound) patter(P.landed, P.landedR / P.landed, Math.max(0.35, engine.timeScale ** 0.5))
+      P.landed = 0
+      P.landedR = 0
+    }
     const a = acc.current
     a.t += dt
     a.frames++
@@ -435,7 +446,7 @@ void main() {
   } else {
     float core = 1.0 - smoothstep(0.55, 1.0, d);
     vec3 c = vec3(0.8, 0.86, 0.9) * (0.75 + 0.25 * core) + uSunColor * vFwd * 2.6;
-    gl_FragColor = vec4(c, vAlpha * core * 0.95);
+    gl_FragColor = vec4(min(c, vec3(20.0)), vAlpha * core * 0.95);
   }
   #include <colorspace_fragment>
 }

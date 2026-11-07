@@ -1,10 +1,11 @@
 import RAPIER from '@dimforge/rapier3d-compat'
+import type { SplashAudio } from './audio'
 import { WaterSim } from './water'
 import { Particles } from './particles'
 import { buildCliffFace, buildStacks, buildTerrain, edgeX, heightAt, type MeshData, type TerrainData } from './terrain'
 import {
   OBJECT_MAP, boundingRadius, frontalArea, volumeOf, volumeSamples,
-  type ObjectDef, type SplashSound, type VolumeSample,
+  type ObjectDef, type VolumeSample,
 } from './objects'
 
 export const DT = 1 / 120
@@ -71,7 +72,7 @@ export class Engine {
   onAdd?: (b: Body) => void
   onRemove?: (b: Body) => void
   onImpact?: (i: ImpactInfo) => void
-  onSplashSound?: (kind: SplashSound, energy: number, radius: number, speed: number, flat: number, secondary: boolean) => void
+  onSplashSound?: (p: SplashAudio) => void
 
   static async create() {
     await RAPIER.init()
@@ -486,13 +487,15 @@ export class Engine {
         }
         this.water.addVolume(x, z, 0.25 * b.volume, R)
         this.water.addFoam(x, z, 0.6, R * 1.5 + 0.3)
-        this.onSplashSound?.('plunk', energy * 0.05 * jetStrength, R * 0.6, jetV, 0, true)
       })
     }
     // fruit bursts on a hard landing
     if (S.burst && speed > 12) this.schedule(0.02, () => this.bodies.includes(b) && this.removeBody(b))
     this.shake = Math.min(1.2, this.shake + Math.log10(1 + energy) / 7)
-    this.onSplashSound?.(S.sound, energy, R, vy, flat, false)
+    this.onSplashSound?.({
+      kind: S.sound, energy, radius: R, speed: vy, flat, density: b.def.density,
+      jet: dens > 0.6 && vy > 3 && jetStrength > 0.05,
+    })
     const info: ImpactInfo = {
       splashId: id, label: b.def.label, emoji: b.def.emoji, speed, energy, mass: b.mass, peak: 0, at: this.simTime,
     }

@@ -27,6 +27,7 @@ Every object has its own splash and sound: orientation-aware slaps for flat face
 | Two‑way coupling | Each step a body displaces exactly the volume it newly submerges, which forms the impact crater, the rings, bobbing ripples and wakes |
 | Splash | Crown sheet + mist at impact, plus a delayed Worthington jet when the cavity collapses. Scaled by impact speed, size and density |
 | Water rendering | Refraction pre-pass (colour + depth) → Beer–Lambert absorption by true ray thickness; planar mirror pass (oblique clip) for cliff/stack reflections; sky cubemap fallback; wind-aligned 16-component chop |
+| Sound | Physically based liquid audio (van den Doel): Minnaert bubbles f₀≈3.26/r with rising chirp, power-law entrained-bubble clouds, cavity & pinch-off bubbles, impact transients scaled by face flatness; spray patter driven by every simulated droplet that lands. `npm run sfx <dir>` renders each object's splash to WAV |
 | Spray | 40k droplets with physical radii (terminal velocity from drag). Each droplet that lands punches its own small crater, which gives the secondary ripples |
 
 Floating depth at rest matches ρ_body/ρ_water (crate 0.48, barrel 0.32, log 0.64, ice 0.91).

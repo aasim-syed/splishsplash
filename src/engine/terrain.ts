@@ -242,7 +242,8 @@ export function viewPresets(): Record<ViewId, { pos: [number, number, number]; t
   return {
     // just past the lip, as if leaning out: the drop and the receding face are in frame, throws fly out from behind you
     edge: { pos: [ex - 3, heightAt(ex - 3, z0) + 4.5, z0 - 7], target: [ex + 30, 0, z0 + 16] },
-    sea: { pos: [48, 15, 46], target: [12, 6, -4] },
+    // from the water, looking down the coast toward the low sun: lit chalk, glitter path, sun in frame
+    sea: { pos: [36, 11, 34], target: [8, 7, -20] },
     aerial: { pos: [-22, 58, 46], target: [24, 0, -4] },
   }
 }
