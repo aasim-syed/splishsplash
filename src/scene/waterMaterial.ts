@@ -26,6 +26,9 @@ const vert = /* glsl */ `
 attribute float aFoam;
 attribute float aFloor;
 uniform float uSimTime;
+uniform mat4 uReflMat;
+varying vec4 vReflCoord;
+varying float vViewZ;
 varying vec3 vWorld;
 varying vec3 vNormal;
 varying float vFoam;
@@ -46,6 +49,8 @@ void main() {
   vColumn = max(wp.y - aFloor, 0.0);
   vHeight = wp.y;
   vec4 mvPosition = viewMatrix * wp;
+  vViewZ = mvPosition.z;
+  vReflCoord = uReflMat * vec4(wp.xyz, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   #include <fog_vertex>
 }
@@ -58,12 +63,22 @@ uniform float uTime;
 uniform vec4 uRect;
 uniform float uFar;
 uniform samplerCube uEnv;
+uniform sampler2D uRefr;
+uniform sampler2D uDepth;
+uniform sampler2D uRefl;
+uniform vec2 uRes;
+uniform float uNear;
+uniform float uFar2;
+uniform float uPasses;
+varying vec4 vReflCoord;
+varying float vViewZ;
 varying vec3 vWorld;
 varying vec3 vNormal;
 varying float vFoam;
 varying float vColumn;
 varying float vHeight;
 #include <fog_pars_fragment>
+#include <packing>
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p) {
@@ -72,18 +87,24 @@ float noise(vec2 p) {
   return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
 }
 
-// wind chop: short deep-water waves, visual only, filtered with distance to avoid shimmer
+// wind sea: 16 deep-water components (ω² = g·k), directions spread around the wind,
+// amplitudes from a k^-1.6 spectrum, each band-limited by screen-space frequency.
 vec2 chop(vec2 p, float t, float lod) {
   vec2 s = vec2(0.0);
-  for (int i = 0; i < 9; i++) {
+  float wind = 3.3; // radians: blowing toward -x (onshore)
+  for (int i = 0; i < 16; i++) {
     float fi = float(i);
-    float ang = fi * 2.399 + 0.6;
+    float spread = (fract(sin(fi * 91.7) * 4375.85) - 0.5) * 1.9;
+    float ang = wind + spread;
     vec2 d = vec2(cos(ang), sin(ang));
-    float k = 0.8 * pow(1.5, fi);
+    float k = 0.55 * pow(1.27, fi);
     float w = sqrt(9.81 * k);
-    float a = 0.03 / k;
-    float atten = clamp(1.0 - k * lod, 0.0, 1.0);
-    s += d * (a * k) * cos(dot(d, p) * k - w * t + fi * 1.7) * atten;
+    float a = 0.11 * pow(k, -1.6) * 0.55;
+    float atten = clamp(1.4 - k * lod, 0.0, 1.0);
+    float ph = dot(d, p) * k - w * t + fi * 2.13;
+    // sharpened (trochoid-like) slope: crests narrower than troughs
+    float c = cos(ph);
+    s += d * (a * k) * c * (1.0 + 0.6 * sin(ph)) * atten;
   }
   return s;
 }
@@ -100,32 +121,55 @@ void main() {
 
   vec3 R = reflect(-V, N);
   R.y = abs(R.y);
-  // glossy reflection: unresolved micro-waves blur the sky more with distance
-  vec3 sky = textureLod(uEnv, R, 2.0 + 3.0 * clamp(dist / 400.0, 0.0, 1.0)).rgb;
+  vec3 skyR = textureLod(uEnv, R, 1.0 + 3.0 * clamp(dist / 500.0, 0.0, 1.0)).rgb;
   float sd = max(dot(R, uSun), 0.0);
-  vec3 spec = uSunColor * (pow(sd, 2200.0) * 60.0 + pow(sd, 220.0) * 2.2 + pow(sd, 18.0) * 0.08);
+  vec3 spec = uSunColor * (pow(sd, 2400.0) * 70.0 + pow(sd, 260.0) * 2.4 + pow(sd, 20.0) * 0.06);
 
-  vec3 deep = vec3(0.003, 0.022, 0.04);
-  vec3 shallow = vec3(0.025, 0.17, 0.17);
-  float colT = exp(-vColumn * 0.3);
-  vec3 water = mix(deep, shallow, colT);
-  // light transmitted through backlit wave faces
-  float sss = pow(max(dot(V, -uSun + N * 0.5), 0.0), 4.0) * clamp(vHeight * 1.5 + 0.4, 0.0, 1.0);
-  water += vec3(0.04, 0.26, 0.2) * sss * uSunColor * 0.45;
-  water *= 0.6 + 0.4 * max(dot(N, uSun), 0.0);
+  vec2 suv = gl_FragCoord.xy / uRes;
+  vec3 reflCol = skyR;
+  vec3 body;
+  float alpha = 1.0;
+  if (uPasses > 0.5) {
+    // planar reflection, rippled by the surface normal
+    vec2 ruv = vReflCoord.xy / vReflCoord.w + N.xz * vec2(0.09, 0.14);
+    vec4 rt = textureLod(uRefl, ruv, 0.6 + clamp(dist / 100.0, 0.0, 2.5));
+    reflCol = mix(skyR, rt.rgb, rt.a);
 
-  vec3 col = mix(water, sky * 0.9, fresnel);
+    // refraction: what's under the surface, absorbed by the real water thickness along the ray
+    float rayScale = dist / max(-vViewZ, 1e-3);
+    float dScene = texture2D(uDepth, suv).x;
+    float thick0 = (vViewZ - perspectiveDepthToViewZ(dScene, uNear, uFar2)) * rayScale;
+    vec2 off = N.xz * 0.045 * clamp(thick0 / 2.5, 0.0, 1.0);
+    vec2 ruv2 = suv + off;
+    float d2 = texture2D(uDepth, ruv2).x;
+    float sceneZ2 = perspectiveDepthToViewZ(d2, uNear, uFar2);
+    if (sceneZ2 > vViewZ) ruv2 = suv; // refracted sample is in front of the water → don't use it
+    float thick = max((vViewZ - perspectiveDepthToViewZ(texture2D(uDepth, ruv2).x, uNear, uFar2)) * rayScale, 0.0);
+    vec3 under = texture2D(uRefr, ruv2).rgb;
+    // Beer–Lambert, red dies first
+    vec3 trans = exp(-vec3(0.5, 0.13, 0.1) * thick);
+    vec3 scatter = vec3(0.008, 0.045, 0.06) * (0.55 + 0.45 * max(uSun.y, 0.0)) * uSunColor;
+    float sss = pow(max(dot(V, -uSun + N * 0.5), 0.0), 4.0) * clamp(vHeight * 1.5 + 0.4, 0.0, 1.0);
+    scatter += vec3(0.02, 0.16, 0.13) * sss * uSunColor * 0.35;
+    body = under * trans + scatter * (1.0 - trans);
+  } else {
+    vec3 deep = vec3(0.003, 0.022, 0.04);
+    vec3 shallow = vec3(0.025, 0.17, 0.17);
+    body = mix(deep, shallow, exp(-vColumn * 0.3));
+    alpha = 0.85;
+  }
+
+  vec3 col = mix(body, reflCol, fresnel);
 
   float n1 = noise(vWorld.xz * 1.8 + uTime * 0.12);
   float n2 = noise(vWorld.xz * 6.5 - uTime * 0.25);
   float lace = smoothstep(0.3, 0.8, n1 * 0.55 + n2 * 0.55);
-  float shore = (1.0 - uFar) * (1.0 - smoothstep(0.0, 1.8, vColumn)) * (0.4 + 0.6 * lace);
+  float shore = (1.0 - uFar) * (1.0 - smoothstep(0.0, 1.4, vColumn)) * smoothstep(0.35, 0.75, lace);
   float foam = clamp(vFoam * (0.45 + 0.9 * lace) + shore, 0.0, 1.0);
   vec3 foamCol = vec3(0.95, 0.96, 0.97) * (0.55 + 0.45 * max(dot(N, uSun), 0.0)) + uSunColor * 0.08;
   col = mix(col, foamCol, foam);
   col += spec * (1.0 - foam);
 
-  float alpha = clamp(0.7 + 0.3 * fresnel + (1.0 - colT) * 0.3 + foam, 0.0, 1.0);
   gl_FragColor = vec4(col, alpha);
   #include <colorspace_fragment>
   #include <fog_fragment>
@@ -136,7 +180,7 @@ export function makeWaterMaterial(far: boolean, rect: [number, number, number, n
   const m = new THREE.ShaderMaterial({
     vertexShader: vert,
     fragmentShader: frag,
-    transparent: true,
+    transparent: false,
     fog: true,
     uniforms: THREE.UniformsUtils.merge([
       THREE.UniformsLib.fog,
@@ -148,6 +192,14 @@ export function makeWaterMaterial(far: boolean, rect: [number, number, number, n
         uRect: { value: new THREE.Vector4(...rect) },
         uFar: { value: far ? 1 : 0 },
         uEnv: { value: null },
+        uRefr: { value: null },
+        uDepth: { value: null },
+        uRefl: { value: null },
+        uReflMat: { value: new THREE.Matrix4() },
+        uRes: { value: new THREE.Vector2(1, 1) },
+        uNear: { value: 0.1 },
+        uFar2: { value: 1000 },
+        uPasses: { value: 0 },
       },
     ]),
   })

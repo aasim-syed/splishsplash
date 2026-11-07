@@ -12,8 +12,10 @@ import { playSplash } from '@/engine/audio'
 import { makeFarOcean, makeWaterMaterial, SUN_DIR } from './waterMaterial'
 import { geometryFor, materialFor } from './meshes'
 import { makeTerrainMaterial } from './terrainMaterial'
+import { WaterPasses } from './waterPasses'
+import { makeClouds } from './clouds'
 
-const SKY = { turbidity: 2.2, rayleigh: 1.6, mieCoefficient: 0.004, mieDirectionalG: 0.86 }
+const SKY = { turbidity: 1.8, rayleigh: 2.6, mieCoefficient: 0.003, mieDirectionalG: 0.86 }
 export const HOME_TARGET = new THREE.Vector3(12, 5, -4)
 
 function makeSky() {
@@ -35,7 +37,7 @@ export function World({ engine }: { engine: Engine }) {
   // Sky → cubemap once: exact sky reflections in the water + PBR environment for everything else
   const env = useMemo(() => {
     const skyScene = new THREE.Scene()
-    skyScene.add(makeSky())
+    skyScene.add(makeSky(), makeClouds(SUN_DIR).mesh)
     const rt = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter })
     const cc = new THREE.CubeCamera(1, 10000, rt)
     cc.update(gl, skyScene)
@@ -46,6 +48,8 @@ export function World({ engine }: { engine: Engine }) {
   }, [gl])
 
   const sky = useMemo(makeSky, [])
+  const clouds = useMemo(() => makeClouds(SUN_DIR), [])
+  useFrame(({ clock }) => { clouds.mat.uniforms.uTime.value = clock.elapsedTime })
 
   useEffect(() => {
     scene.environment = env.pm
@@ -57,6 +61,7 @@ export function World({ engine }: { engine: Engine }) {
   return (
     <>
       <primitive object={sky} />
+      <primitive object={clouds.mesh} />
       <hemisphereLight args={['#c4dcf5', '#5b5040', 0.6]} />
       <directionalLight
         position={SUN_DIR.clone().multiplyScalar(140).add(HOME_TARGET)}
@@ -164,7 +169,7 @@ function CameraRig({ engine }: { engine: Engine }) {
       state.camera.rotateX(Math.sin(t * 37) * s)
       state.camera.rotateY(Math.sin(t * 29 + 1) * s)
     }
-  }, 1)
+  }, 0.5)
   return null
 }
 
@@ -199,6 +204,26 @@ function Terrain({ engine }: { engine: Engine }) {
 
 function Water({ engine, env }: { engine: Engine; env: THREE.Texture }) {
   const w = engine.water
+  const simRef = useRef<THREE.Mesh>(null!)
+  const farRef = useRef<THREE.Mesh>(null!)
+  const passes = useMemo(() => new WaterPasses(), [])
+  useEffect(() => () => passes.dispose(), [passes])
+  // render refraction + reflection views right before the composer draws the frame
+  useFrame(({ gl, scene, camera }) => {
+    const cam = camera as THREE.PerspectiveCamera
+    passes.render(gl, scene, cam, [simRef.current, farRef.current])
+    for (const m of [mat, farMat]) {
+      const u = m.uniforms
+      u.uRefr.value = passes.refr.texture
+      u.uDepth.value = passes.refr.depthTexture
+      u.uRefl.value = passes.refl.texture
+      u.uReflMat.value.copy(passes.textureMatrix)
+      u.uRes.value.set(passes.refr.width, passes.refr.height)
+      u.uNear.value = cam.near
+      u.uFar2.value = cam.far
+      u.uPasses.value = 1
+    }
+  }, 0.9)
   const { geo, mat, farMat, farGeo } = useMemo(() => {
     const rect: [number, number, number, number] = [w.x0, w.z0, w.x0 + w.size, w.z0 + w.size]
     const N = w.N
@@ -264,8 +289,8 @@ function Water({ engine, env }: { engine: Engine; env: THREE.Texture }) {
 
   return (
     <>
-      <mesh geometry={geo} material={mat} renderOrder={1} frustumCulled={false} />
-      <mesh geometry={farGeo} material={farMat} position={[0, -0.01, 0]} renderOrder={0} frustumCulled={false} />
+      <mesh ref={simRef} geometry={geo} material={mat} frustumCulled={false} />
+      <mesh ref={farRef} geometry={farGeo} material={farMat} position={[0, -0.01, 0]} frustumCulled={false} />
     </>
   )
 }

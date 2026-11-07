@@ -105,7 +105,7 @@ export function buildTerrain(): TerrainData {
       let r: number, g: number, b: number
       if (h < -0.4) {
         const wet = smooth(-7, -0.4, h)
-        r = 0.74 - 0.3 * wet; g = 0.66 - 0.28 * wet; b = 0.5 - 0.2 * wet // pale sand → dark wet rock
+        r = 0.5 - 0.22 * wet; g = 0.46 - 0.2 * wet; b = 0.38 - 0.15 * wet // pale sand → dark wet rock
       } else if (slope > 0.9 || h < CLIFF_TOP - 1.0) {
         // layered limestone/sandstone: warm strata, darker seams, white lip, algae at the waterline
         const band = 0.5 + 0.5 * Math.sin(h * 1.7 + nz * 2.5)
@@ -161,7 +161,7 @@ function chalk(z: number, y: number, crag: number): [number, number, number] {
   let r = 0.6, g = 0.58, b = 0.53
   // weathering streaks running down the face
   const streak = smooth(0.05, 0.45, fbm(z * 0.5, y * 0.04 + 5, 2))
-  r -= 0.1 * streak; g -= 0.1 * streak; b -= 0.12 * streak
+  r -= 0.05 * streak; g -= 0.05 * streak; b -= 0.06 * streak
   // flint bands: thin dark dotted strata
   const band = Math.sin(y * 1.25 + 0.8 * fbm(z * 0.08, y * 0.1, 2))
   const flint = smooth(0.95, 0.995, band) * smooth(-0.1, 0.4, fbm(z * 0.9, y * 0.9, 1))
@@ -200,7 +200,7 @@ export function buildCliffFace(): MeshData {
     // buttresses & gullies: tall vertical structure (stretched in y), plus finer fracturing
     const crag01 = 0.5 + 0.5 * fbm(z * 0.3 + 3, y * 0.045, 3)
     const gully = Math.pow(0.5 + 0.5 * fbm(z * 0.7 + 11, y * 0.08, 2), 2)
-    const crag = 2.2 * crag01 + 0.7 * gully + 0.2 * (0.5 + 0.5 * fbm(z * 0.9, y * 0.7, 1)) + ledge
+    const crag = 2.2 * crag01 + 0.4 * gully + 0.2 * (0.5 + 0.5 * fbm(z * 0.9, y * 0.7, 1)) + ledge
     const lip = y > top - 0.6 ? 0.35 : 1
     const x = ex + d + 1.0 + crag * lip
     return { p: [x, y, z + 0.25 * fbm(y * 0.3, z * 0.3, 1)], c: chalk(z, y, crag01) }

@@ -356,19 +356,31 @@ export class Engine {
     const steep = Math.min(1, vy / Math.max(speed, 1e-3) + 0.15)
     const crownN = Math.floor(Math.min(2600, 30 + 300 * R * Math.sqrt(vy) * dens * (0.6 + R)))
     const hx = v.x * 0.35, hz = v.z * 0.35
-    const dropSize = 0.035 + 0.05 * Math.min(1.6, R + 0.3)
-    // crown sheet
-    for (let i = 0; i < crownN; i++) {
-      const phi = Math.random() * Math.PI * 2
-      const rr = R * (0.85 + 0.5 * Math.random())
-      const out = vy * (0.1 + 0.32 * Math.random() ** 1.5) * (0.6 + 0.4 * dens)
-      const up = vy * (0.12 + 0.4 * Math.random()) * dens * steep * (1 - 0.35 * Math.random())
-      const rad = 0.003 + 0.012 * Math.random() * Math.min(1.5, R + 0.3)
-      P.spawn(
-        x + Math.cos(phi) * rr, ws + 0.05, z + Math.sin(phi) * rr,
-        Math.cos(phi) * out + hx * Math.random(), up, Math.sin(phi) * out + hz * Math.random(),
-        rad, dropSize * (0.6 + Math.random() * 0.8), 6, false, id,
-      )
+    const dropSize = 0.028 + 0.04 * Math.min(1.6, R + 0.3)
+    // crown: emitted as a short curtain (≈0.1 s) — early fluid is fastest and thrown widest,
+    // later fluid rises slower from a wider rim → reads as a sheet, not a burst
+    const batches = 6
+    for (let bi = 0; bi < batches; bi++) {
+      const f = bi / (batches - 1)
+      const n = Math.floor((crownN * 1.4) / batches)
+      const emit = () => {
+        const wsn = this.water.heightAt(x, z)
+        for (let i = 0; i < n; i++) {
+          const phi = Math.random() * Math.PI * 2
+          const rr = R * (0.9 + 0.45 * f + 0.15 * Math.random())
+          const sp = 1 - 0.45 * f
+          const out = vy * (0.12 + 0.22 * Math.random() ** 1.5) * (0.6 + 0.4 * dens) * sp
+          const up = vy * (0.16 + 0.34 * Math.random()) * dens * steep * sp
+          const rad = 0.002 + 0.008 * Math.random() * Math.min(1.5, R + 0.3)
+          P.spawn(
+            x + Math.cos(phi) * rr, wsn + 0.04, z + Math.sin(phi) * rr,
+            Math.cos(phi) * out + hx * Math.random(), up, Math.sin(phi) * out + hz * Math.random(),
+            rad, dropSize * (0.5 + Math.random() * 0.8), 6, false, id,
+          )
+        }
+      }
+      if (bi === 0) emit()
+      else this.schedule(f * 0.1, emit)
     }
     // mist
     const mistN = Math.floor(crownN * 0.12)
