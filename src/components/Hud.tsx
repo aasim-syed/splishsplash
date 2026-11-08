@@ -212,7 +212,7 @@ export function Telemetry({ engine }: { engine: Engine }) {
   const [ev, eu] = fmtEnergy(last.energy)
   const peak = Math.max(0, engine.splashPeak(last.splashId))
   return (
-    <div className={cn('absolute bottom-5 left-6 w-[248px] rounded-2xl p-4 select-none', glass)}>
+    <div className={cn('absolute bottom-24 left-6 w-[248px] rounded-2xl p-4 select-none', glass)}>
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-[0.2em] text-white/45">Impact</span>
         <span className="text-xs text-white/80">{last.label}</span>

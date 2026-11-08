@@ -19,7 +19,7 @@ export class Particles {
   size = new Float32Array(this.cap) // render size (m)
   life = new Float32Array(this.cap)
   maxLife = new Float32Array(this.cap)
-  /** 0 water droplet, 1 mist, 2 solid debris */
+  /** 0 water droplet, 1 mist, 2 solid debris, 3 snowflake (no ripple/sound) */
   mist = new Uint8Array(this.cap)
   cr = new Float32Array(this.cap).fill(1); cg = new Float32Array(this.cap).fill(1); cb = new Float32Array(this.cap).fill(1)
   owner = new Int32Array(this.cap)
@@ -88,7 +88,7 @@ export class Particles {
           const ws = water.heightAt(x, z)
           if (y < ws) {
             if (y < water.floorAt(x, z)) { this.life[i] = 0; continue }
-            if (this.mist[i] !== 1) {
+            if (this.mist[i] !== 1 && this.mist[i] !== 3) {
               this.landed++
               this.landedR += r
               // droplet impact crater: volume scales with drop volume × impact speed

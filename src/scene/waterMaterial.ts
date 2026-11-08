@@ -72,6 +72,7 @@ uniform float uNear;
 uniform float uFar2;
 uniform float uPasses;
 uniform float uChop;
+uniform float uSunVis;
 uniform vec3 uWaterTint;
 varying vec4 vReflCoord;
 varying float vViewZ;
@@ -124,9 +125,9 @@ void main() {
 
   vec3 R = reflect(-V, N);
   R.y = abs(R.y);
-  vec3 skyR = textureLod(uEnv, R, 0.5 + 2.5 * clamp(dist / 600.0, 0.0, 1.0)).rgb;
+  vec3 skyR = min(textureLod(uEnv, R, 0.5 + 2.5 * clamp(dist / 600.0, 0.0, 1.0)).rgb, vec3(24.0));
   float sd = max(dot(R, uSun), 0.0);
-  vec3 spec = uSunColor * (pow(sd, 2400.0) * 70.0 + pow(sd, 260.0) * 2.4 + pow(sd, 20.0) * 0.06);
+  vec3 spec = uSunColor * uSunVis * (pow(sd, 2400.0) * 70.0 + pow(sd, 260.0) * 2.4 + pow(sd, 20.0) * 0.06);
 
   vec2 suv = gl_FragCoord.xy / uRes;
   vec3 reflCol = skyR;
@@ -136,7 +137,7 @@ void main() {
     // planar reflection, rippled by the surface normal
     vec2 ruv = vReflCoord.xy / vReflCoord.w + N.xz * vec2(0.05, 0.08);
     vec4 rt = textureLod(uRefl, ruv, 0.15 + clamp(dist / 260.0, 0.0, 1.6));
-    reflCol = mix(skyR, rt.rgb, rt.a);
+    reflCol = mix(skyR, min(rt.rgb, vec3(24.0)), clamp(rt.a, 0.0, 1.0));
 
     // refraction: what's under the surface, absorbed by the real water thickness along the ray
     float rayScale = dist / max(-vViewZ, 1e-3);
@@ -148,7 +149,7 @@ void main() {
     float sceneZ2 = perspectiveDepthToViewZ(d2, uNear, uFar2);
     if (sceneZ2 > vViewZ) ruv2 = suv; // refracted sample is in front of the water → don't use it
     float thick = max((vViewZ - perspectiveDepthToViewZ(texture2D(uDepth, ruv2).x, uNear, uFar2)) * rayScale, 0.0);
-    vec3 under = texture2D(uRefr, ruv2).rgb;
+    vec3 under = min(texture2D(uRefr, ruv2).rgb, vec3(24.0));
     // Beer–Lambert, red dies first
     vec3 trans = exp(-vec3(0.5, 0.13, 0.1) * thick);
     vec3 scatter = vec3(0.008, 0.045, 0.06) * (0.55 + 0.45 * max(uSun.y, 0.0)) * uSunColor;
@@ -173,7 +174,9 @@ void main() {
   col = mix(col, foamCol, foam);
   col += spec * (1.0 - foam);
 
-  gl_FragColor = vec4(min(col, vec3(48.0)), alpha); // keep HDR glints finite in half-float targets
+  // keep HDR glints finite in half-float targets; scrub NaNs (they smear through bloom as coloured specks)
+  if (any(isnan(col)) || any(isinf(col))) col = body;
+  gl_FragColor = vec4(clamp(col, vec3(0.0), vec3(48.0)), alpha);
   #include <colorspace_fragment>
   #include <fog_fragment>
 }
@@ -214,6 +217,7 @@ export function makeWaterMaterial(far: boolean, rect: [number, number, number, n
   m.uniforms.uChop = ATMOS_U.uChop
   m.uniforms.uSwellScale = ATMOS_U.uSwellScale
   m.uniforms.uWaterTint = ATMOS_U.uWaterTint
+  m.uniforms.uSunVis = ATMOS_U.uSunVis
   return m
 }
 

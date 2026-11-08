@@ -21,6 +21,7 @@ import { makeSun } from './sun'
 
 export const HOME_TARGET = new THREE.Vector3(12, 5, -4)
 const VIEWS = viewPresets()
+;(globalThis as unknown as Record<string, unknown>).__views = VIEWS
 
 function makeSky() {
   const sky = new Sky()
@@ -75,8 +76,10 @@ export function World({ engine }: { engine: Engine }) {
     scene.fog = new THREE.Fog(atmos.fog[0], atmos.fog[1], atmos.fog[2])
     gl.toneMappingExposure = atmos.exposure
     sun.mat.uniforms.uIntensity.value = atmos.sunDisc
+    engine.weather.rain = atmos.rain
+    engine.weather.snow = atmos.snowfall
     return () => { pm.dispose() }
-  }, [atmos, gl, scene, env, sky, sun])
+  }, [atmos, gl, scene, env, sky, sun, engine])
 
   const sunPos = useMemo(() => sunFrom(atmos).multiplyScalar(160).add(HOME_TARGET), [atmos])
 
@@ -225,6 +228,8 @@ function CameraRig({ engine }: { engine: Engine }) {
       state.camera.position.add(delta)
       if (!alive && delta.lengthSq() < 1e-6) home.current = null
     }
+    engine.weather.cx = (controls.target.x + state.camera.position.x) / 2
+    engine.weather.cz = (controls.target.z + state.camera.position.z) / 2
     engine.shake *= Math.exp(-dt * 3.2)
     const s = engine.shake * 0.01
     if (s > 1e-4) {
@@ -453,7 +458,8 @@ void main() {
   } else {
     float core = 1.0 - smoothstep(0.55, 1.0, d);
     vec3 c = vec3(0.8, 0.86, 0.9) * (0.75 + 0.25 * core) + uSunColor * vFwd * 2.6;
-    gl_FragColor = vec4(min(c, vec3(20.0)), vAlpha * core * 0.95);
+    if (any(isnan(c))) discard;
+    gl_FragColor = vec4(clamp(c, vec3(0.0), vec3(20.0)), vAlpha * core * 0.95);
   }
   #include <colorspace_fragment>
 }

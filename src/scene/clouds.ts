@@ -46,14 +46,15 @@ export function makeClouds(sun: THREE.Vector3) {
         float lit = clamp(1.0 - occl * 1.1 + 0.25, 0.0, 1.0);
         float sunAmt = max(dot(d, uSun), 0.0);
         vec3 base = mix(vec3(0.46, 0.5, 0.58), vec3(0.42, 0.33, 0.4) + uSunColor * 0.2, smoothstep(0.3, 0.0, uSun.y));
-        base = mix(base, vec3(0.22, 0.24, 0.27), uCloudDark);
-        vec3 bright = mix(uSunColor * 1.7, vec3(0.6, 0.62, 0.66), uCloudDark);
+        base = mix(base, vec3(0.12, 0.13, 0.15), uCloudDark);
+        vec3 bright = mix(uSunColor * 1.7, vec3(0.38, 0.4, 0.43), uCloudDark);
         vec3 col = mix(base, bright, lit) + uSunColor * pow(sunAmt, 10.0) * (1.0 - c) * 3.0;
         // underside glow at low sun
         col += uSunColor * (1.0 - lit) * 0.35 * smoothstep(0.35, 0.0, uSun.y) * (1.0 - uCloudDark);
-        float fade = smoothstep(0.005, 0.18, d.y);
+        float fade = smoothstep(0.005, mix(0.18, 0.02, uCloudDark), d.y);
         // aerial perspective: distant clouds melt into the horizon haze
-        col = mix(mix(vec3(0.78, 0.82, 0.86), uSunColor * 0.8, smoothstep(0.3, 0.0, uSun.y) * 0.6), col, smoothstep(0.02, 0.3, d.y));
+        vec3 haze = mix(mix(vec3(0.78, 0.82, 0.86), uSunColor * 0.8, smoothstep(0.3, 0.0, uSun.y) * 0.6), vec3(0.36, 0.39, 0.42), uCloudDark);
+        col = mix(haze, col, smoothstep(0.02, 0.3, d.y));
         gl_FragColor = vec4(col, c * fade * mix(0.92, 1.0, uCloudDark));
       }`,
   })

@@ -61,6 +61,8 @@ export class Engine {
   /** camera shake budget, decays in the renderer */
   shake = 0
   lastThrown: Body | null = null
+  /** precipitation, spawned around (cx, cz): rain & snow intensities 0..1 */
+  weather = { rain: 0, snow: 0, cx: 20, cz: 0 }
   paused = false
   simTime = 0
   private acc = 0
@@ -249,6 +251,7 @@ export class Engine {
     for (const b of this.bodies) this.applyFluidForces(b)
     this.world.step()
     water.step(DT)
+    this.spawnWeather()
     this.particles.step(DT, water)
     this.simTime += DT
     if (this.queue.length) {
@@ -261,6 +264,27 @@ export class Engine {
     for (const b of [...this.bodies]) {
       const p = b.rb.translation()
       if (p.y < -40 || Math.abs(p.x) > 300 || Math.abs(p.z) > 300) this.removeBody(b)
+    }
+  }
+
+  private spawnWeather() {
+    const { rain, snow, cx, cz } = this.weather
+    const P = this.particles
+    // rain: ~1.2 mm drops at terminal velocity (~7 m/s), slanted by the storm wind
+    let n = rain * 2600 * DT
+    while (n > 0) {
+      if (n < 1 && Math.random() > n) break
+      n--
+      const x = cx + (Math.random() - 0.5) * 70, z = cz + (Math.random() - 0.5) * 70
+      P.spawn(x, 14 + Math.random() * 10, z, -2.2, -7.2, 0.6, 0.0012, 0.016, 5, 0, -1)
+    }
+    // snow: slow-falling flakes with gentle drift
+    n = snow * 700 * DT
+    while (n > 0) {
+      if (n < 1 && Math.random() > n) break
+      n--
+      const x = cx + (Math.random() - 0.5) * 60, z = cz + (Math.random() - 0.5) * 60
+      P.spawn(x, 10 + Math.random() * 14, z, -0.8 + Math.random() * 0.4, -1.2, 0.3 * (Math.random() - 0.5), 0.00025, 0.045 + Math.random() * 0.03, 14, 3, -1, [0.95, 0.96, 1])
     }
   }
 
